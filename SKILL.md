@@ -1,118 +1,200 @@
 ---
 name: memory-curation
-description: Curate agent memory under user/project/session scopes - inventory, reclassify via cross-project comparison, propose user-layer promotions, never auto-promote. Use when the user says "整理记忆", "清一下记忆", "归类记忆", "整理记忆文件", "帮我归类记忆", "memory curation", "clean up memory", or asks to organize MEMORY.md / memory scopes. Do NOT use for ordinary coding tasks, one-off memory search, or merely reading past notes without organizing them.
+description: Curate agent memory under user/project/session scopes - inventory entries, compare at most 2-3 other projects on rules/index only, classify with a fixed decision tree, propose user-layer promotions, never auto-promote. Use when the user says "整理记忆", "清一下记忆", "归类记忆", "整理记忆文件", "帮我归类记忆", "memory curation", "clean up memory", or asks how projects are compared / how memory is classified. Do NOT use for ordinary coding tasks, one-off memory search, or merely reading past notes without organizing them.
 ---
 
 # Memory Curation
 
-Organize memory files under three scopes (user / project / session). Cross-project comparison runs **here**, not during ordinary project work.
+Organize memory into **user / project / session**. Cross-project comparison is a **classification step**, not a knowledge-injection step.
 
 ## Important
 
-- **比较 ≠ 晋升**: multi-project similarity is evidence for a proposal only. Never write user-layer memory without explicit user confirmation.
-- **Default read boundary**: only user memory + current project + current session notes. Expand to other projects only when classifying suspicious/candidate entries.
-- **Never** inject curation findings into unrelated task contexts; do not dump other projects' session/code into this conversation.
-- **unbound session**: do not invent a project; do not write project-scoped memory under a fake/global project id.
-- Registered project paths come from the host project registry only; never guess paths.
+- **比较 ≠ 晋升**: multi-project similarity is only evidence for a *proposal*.
+- **Default read boundary**: user memory + current project + current session notes.
+- **Never** paste other projects' memory into ordinary task answers.
+- **unbound**: do not invent a project; never dump facts under a fake/global project id.
+- **Do not guess project paths**; use the host registry or user-provided absolute paths only.
+- Prefer **dry-run** (Steps 0–4) before any disk write (Step 5).
+
+## Modes
+
+| User intent | Mode | What runs |
+|---|---|---|
+| 整理记忆 / 归类 / clean up | full | Steps 0–6 |
+| 「怎么比较 / 怎么分类」 | explain + optional dry-run | Judgment section + report only |
+| 「只整理 user 层」等 | partial | Honor the named scope only |
+| 普通写代码 / 查一下笔记 | none | Do **not** load this skill |
+
+## How projects are compared (方法)
+
+### What is compared
+
+| Object | Read | Do not read |
+|---|---|---|
+| Candidate entry | Core claim (one sentence) | Surrounding task chatter |
+| Other projects | `AGENTS.md` rules sections; MEMORY **title/index** bullets | Source code, full session logs, deep path details |
+| Budget | At most **2–3** other projects | Whole memory dump |
+
+The comparison answers only: **"Which scope does this claim belong to?"**
+
+### How to compare (procedure)
+
+1. Rewrite the candidate as a **core claim** (what behavior/fact does it constrain?).
+2. Mark signals: path/API/version? collaboration preference? task progress?
+3. For each of 2–3 other projects, read rules/index only — is there a **similar claim type**?
+4. Record `evidence: single-project | multi-project-hint`.
+5. Decide via the judgment tree below.
+6. Propose; do not write until confirmation rules allow it.
+
+### Judgment tree (怎么判断)
+
+```text
+Is it task progress / throwaway draft?
+  YES -> session
+
+Does it contain project-specific identifiers
+(path, module, API, version) OR clearly only true for one repo?
+  YES -> project
+
+Is it about HOW the user wants the agent to collaborate
+(language, isolation, workflow bans, role)?
+  NO  -> project (or do not store)
+  YES -> Similar wording in >=2 unrelated projects?
+           NO  -> project
+           YES -> Is it only generic tech practice
+                  (git/python/lint/tooling defaults)?
+                    YES -> project (NOT user)
+                    NO  -> user CANDIDATE
+                           (whitelist + user confirm required)
+```
+
+### What does NOT count as cross-project evidence
+
+- Same tech stack on both sides (both Python, both Git, both uv)
+- Host/agent default behavior that is not a user preference
+- Coincidental similar filenames or folder layout
+- Industry standards (conventional commit style, semver) unless the user stated them as *personal global rules*
+
+### Hard rules
+
+1. Comparison does **not** equal promotion.
+2. `user` candidate → propose → write **only after** explicit user confirmation.
+3. Unbound sessions never write project memory under a fake global id.
+4. Generic industry practice is not user memory.
+5. Classification artifacts stay in the curation report; they are not task knowledge.
+
+## User-layer whitelist
+
+Allowed:
+
+- Response language / tone
+- Collaboration rules the user stated as global
+- Explicit global bans / workflow preferences
+- Explicitly remembered identity/role
+
+Denied:
+
+- Repo architecture, paths, interfaces, dependency conclusions
+- Task progress
+- Single-project lessons
 
 ## Instructions
 
-### Step 0: Determine binding and scope set
+### Step 0: Binding, mode, paths
 
-1. Resolve `project_id`:
-   - User named a project → use its registered absolute path
-   - Runtime already bound a project → use it
+1. Resolve `project_id` (first hit wins):
+   - User named a registered project → absolute path
+   - Runtime binding → use it
    - `cwd` under a registered project → use it
    - Else → `unbound`
-2. Note current `session_id` if available (for session notes).
-3. Resolve memory locations (adapt to this agent's layout; do not hardcode another product's branding):
+2. Note `session_id` if available.
+3. Resolve locations (host layout; keep product-agnostic wording):
 
    | Scope | Typical location |
    |---|---|
    | user | `<memory-root>/global/MEMORY.md` |
-   | project | `<project_id>/AGENTS.md` and/or `<memory-root>/projects/<project-slug>/` |
+   | project | `<project_id>/AGENTS.md` and/or `<memory-root>/projects/<slug>/` |
    | session | `<memory-root>/sessions/<session_id>/notes.md` |
 
-If the user only wants one scope curated, honor that; otherwise default to user + bound project + current session.
+4. Choose mode (full / partial / explain).
+
+Optional deterministic assist:
+
+```bash
+python scripts/inventory.py --user <user-memory-file> \
+  --project-agents <project>/AGENTS.md \
+  --session <session-notes-file>
+```
+
+If paths are missing, skip the script and inventory by reading files directly.
 
 ### Step 1: Inventory (盘点)
 
-Read the in-scope memory files. Produce an internal table of entries:
+Build an entry table (do not edit disk yet):
 
-| id/line | text (short) | current scope | status | issues |
-|---|---|---|---|---|
+| id | file:line | core claim (short) | current scope | status | issues |
+|---|---|---|---|---|---|
 
-Flag:
+Flag issues:
 
-- duplicates / near-duplicates
-- expired or task-progress entries living in project/user
-- missing or wrong `scope`
+- duplicate / near-duplicate
+- task progress living in project/user
+- missing or wrong scope
 - project facts sitting in user layer
-- user-candidate material sitting only in one project
-- empty shells / placeholder lines
+- possible user-candidate (collaboration preference)
+- empty shell / placeholder
+- overly long entry that should be split
 
-Do not rewrite files yet.
+### Step 2: Comparative classification (flagged items only)
 
-### Step 2: Comparative classification (only for flagged items)
+For each flagged entry, run **How projects are compared** + judgment tree.
 
-For each **scope-suspicious** or **user-candidate** entry only:
+Output per candidate:
 
-1. Read **index/rule-level** content from at most **2–3** other registered projects:
-   - `<other_project>/AGENTS.md` rules sections
-   - MEMORY index/title-level bullets if present
-2. Classify with these signals (see also `references/classification.md`):
-
-| Signal | Scope |
-|---|---|
-| Paths, module names, APIs, versions | project |
-| Only in one project; no similar rule elsewhere | project |
-| User preference repeated in ≥2 unrelated projects | **user candidate** (confirm first) |
-| Generic tech practice (Git, Python, lint) | stays project / not user |
-| In-progress task notes | session |
-
-3. Record `evidence: single-project | multi-project-hint` on candidates.
-4. Do **not** paste other projects' memory text into task answers beyond the curation report.
+```yaml
+id: U-03
+claim: "默认中文回复"
+current: user
+judged: user | project | session
+evidence: multi-project-hint | single-project
+seen_in: [projectA_rules, projectB_index]  # index/rule level only
+action: keep | move | merge | propose_user | drop
+needs_confirm: true|false
+```
 
 ### Step 3: Draft actions
 
-Prepare a plan **before** editing disk:
+| Finding | Action | Confirm? |
+|---|---|---|
+| Clearly project-local | keep/write project AGENTS.md / project memory | no (if already correct) |
+| Project fact in user layer | move to that project or drop if unbound | yes if destructive |
+| Whitelist + user already said "all projects" | write user MEMORY | use that explicit statement |
+| multi-project-hint collaboration pref | **propose_user** only | **yes, always** |
+| Expired session draft | archive/drop | yes if delete |
+| Duplicate | merge tighter wording | no for pure merge |
 
-| Finding | Action |
-|---|---|
-| Clearly project-local fact | keep/write project AGENTS.md or project memory |
-| Clearly user whitelist preference, user already said "all projects" | write user MEMORY |
-| multi-project-hint preference | **proposal only** → wait for user |
-| expired session draft | archive/delete; do not promote |
-| wrong-scope project fact in user layer | propose move to project (or delete if unbound) |
-| duplicate | merge; keep the tighter wording |
+### Step 4: Dry-run report (default before writes)
 
-User-layer whitelist only:
+Use `references/report-template.md`. Structure:
 
-- reply language / communication style
-- collaboration rules the user stated as global
-- explicit global bans / workflow preferences
-- explicitly remembered identity/role
+1. Binding + mode + files scanned
+2. Inventory counts
+3. Per-entry decisions (table)
+4. **User-candidate proposals** (quote + projects + suggested wording)
+5. Planned disk edits
+6. Ask for confirmation on promotions/deletes
 
-### Step 4: Present proposal and wait
+Use interactive question UI when multiple yes/no promotion choices exist.
 
-Report to the user in the conversation language (Chinese by default unless they asked otherwise):
+**Gate:** no user-layer write and no destructive delete until user confirms.
 
-1. Inventory summary (counts + major issues)
-2. Proposed disk edits (file → change), including confirmed-safe project/user merges
-3. **User-candidate promotion list** (max a few): quote + which projects suggested it + suggested user-layer wording
-4. Ask for confirmation on promotions and any destructive deletes
+### Step 5: Apply confirmed changes only
 
-Use the interactive question UI when presenting yes/no promotion choices if multiple candidates exist.
-
-**Do not write user-layer promotions or delete entries until the user confirms** (non-destructive project-local merges the user already approved in the same request may proceed; when unsure, wait).
-
-### Step 5: Apply confirmed changes
-
-1. Edit files with precise paths only.
-2. User memory file structure: keep `## Rules` / `## Architecture decisions` / `## Discovered durable knowledge`; short bullets; no project detail.
-3. Project memory: `status: stable` for kept conclusions; `promoted_from` when elevating. Prefer project `AGENTS.md` for durable project rules.
-4. Session notes: record curation outcome briefly; archive dead drafts.
-5. Optional frontmatter:
+1. Edit exact paths only.
+2. User file sections stay: `## Rules` / `## Architecture decisions` / `## Discovered durable knowledge`.
+3. Project durable rules prefer `AGENTS.md`; mark `status: stable`; set `promoted_from` when elevating.
+4. Session notes: record curation outcome; archive dead drafts.
+5. Frontmatter (optional but recommended):
 
 ```yaml
 scope: user | project | session
@@ -123,36 +205,46 @@ evidence: single-project | multi-project-hint
 promoted_from: null | <path or id>
 ```
 
+6. Re-run inventory script if available; confirm flagged issues are resolved or explicitly deferred.
+
 ### Step 6: Closing checklist
 
-- [ ] No project facts written to global/user memory
+- [ ] No project facts written to user/global memory
 - [ ] No auto-promotion to user without confirmation
 - [ ] No other-project content injected as task knowledge
-- [ ] No fake global project used as a dump for unbound facts
+- [ ] No fake global project dump for unbound facts
+- [ ] Judgments recorded with `evidence`
 - [ ] Indexes updated; empty shells removed
 - [ ] User told what changed and what stayed untouched
 
 ## Examples
 
 **User**: 整理记忆  
-**Action**: inventory user+bound project+session → flag issues → compare only suspicious items → propose list → wait → apply confirmed edits.
+**Action**: full dry-run → report → wait → apply confirmed edits.
 
-**User**: 把这条升到全局记忆：以后回复都用中文  
-**Action**: whitelist hit + explicit → write user MEMORY.md; skip multi-project scan unless cleaning more items in the same request.
+**User**: 项目怎么比较怎么分类怎么判断？  
+**Action**: explain the judgment tree; offer optional dry-run inventory. Do not mass-edit.
 
-**User**: 帮我看下 <some-repo> 的代码  
-**Action**: Do **not** load this skill. Ordinary project work; no curation sweep.
+**User**: 把这条升到全局：以后回复都用中文  
+**Action**: whitelist + explicit → write user MEMORY.md; no multi-project scan required unless also curating.
+
+**User**: 看一下 `<repo>` 的代码  
+**Action**: do not load this skill.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| No other projects have AGENTS/MEMORY | Treat evidence as `single-project`; still propose only when whitelist + user language support it |
-| User says "都写进去" without listing items | Apply only confirmed proposals; do not mass-promote all project notes |
-| Unbound + project-looking entries | Leave in session or ask which project they belong to; never shove into global |
-| Skill does not trigger | Ensure the host loads global skills; a new conversation may be required after install |
+| Other projects have no AGENTS/MEMORY | `evidence: single-project`; only propose user items when whitelist + explicit user language support it |
+| User says "都写进去" without a list | Apply only listed/confirmed proposals; no mass-promotion |
+| Unbound + project-looking entries | Leave in session or ask which project; never shove into global |
+| Two projects share a tech default | Still project — not user |
+| Skill not triggering | Host must load global skills; new conversation after install |
+| Git push to the skill repo fails (443 timeout) | Update files via host API if available; content must stay brand-agnostic |
 
-## Related
+## Related files
 
-- Scope convention: the host's global agent instructions (e.g. `AGENTS.md` in the agent config root), if present
-- Classification signals: `references/classification.md` (same folder)
+- `references/classification.md` — signals, whitelist, hard rules
+- `references/report-template.md` — dry-run report skeleton
+- `scripts/inventory.py` — optional deterministic inventory helper
+- Host global agent instructions (e.g. `AGENTS.md` memory-scope section), if present
